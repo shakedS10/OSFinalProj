@@ -1,0 +1,373 @@
+        -:    0:Source:main.cpp
+        -:    0:Graph:main.gcno
+        -:    0:Data:main.gcda
+        -:    0:Runs:1
+        -:    1:#include <iostream>
+        -:    2:#include <string>
+        -:    3:#include <sstream>
+        -:    4:#include <vector>
+        -:    5:#include <algorithm>
+        -:    6:#include "algorithms.hpp"
+        -:    7:#include "reactor.hpp"
+        -:    8:
+        -:    9:#include "graph.hpp"
+        -:   10:#include "tree.hpp"
+        -:   11:
+        -:   12:#include "leader_follower.hpp"
+        -:   13:#include "active_object.hpp"
+        -:   14:#include "pipeline.hpp"
+        -:   15:
+        -:   16:#include <mutex>
+        -:   17:#include <pthread.h>
+        -:   18:
+        -:   19:#include <sys/socket.h>
+        -:   20:#include <netinet/in.h>
+        -:   21:#include <arpa/inet.h>
+        -:   22:#include <netdb.h>
+        -:   23:
+        -:   24:
+        -:   25:
+        -:   26:using namespace std;
+        -:   27:
+        -:   28:Graph graph;
+        -:   29:Tree mst;
+        -:   30:bool is_graph = false, is_mst = false;
+        -:   31:bool is_pipeline = false;
+        -:   32:bool is_kruskal = false;
+        -:   33:
+        -:   34://Reactor* reactor;
+        -:   35:std::unique_ptr<Reactor> reactor;
+        -:   36:stringstream ss;
+        -:   37:mutex mtx;
+        -:   38:
+    #####:   39:void* get_in_addr(struct sockaddr *sa)
+        -:   40:{
+    #####:   41:        if (sa->sa_family == AF_INET) {
+    #####:   42:            return &(((struct sockaddr_in*)sa)->sin_addr);
+        -:   43:        }
+    #####:   44:        return &(((struct sockaddr_in6*)sa)->sin6_addr);
+        -:   45:}
+        -:   46:
+        1:   47:int Listener(int nport = 9035) {
+        1:   48:    int yes=1;        // For setsockopt() SO_REUSEADDR, below
+        -:   49:    int rv, fd;
+        -:   50:
+        -:   51:
+        -:   52:    struct addrinfo hints, *ai, *p;
+        -:   53:
+        -:   54:    // Get us a socket and bind it
+        1:   55:    memset(&hints, 0, sizeof(hints));
+        1:   56:    hints.ai_family = AF_UNSPEC;
+        1:   57:    hints.ai_socktype = SOCK_STREAM;
+        1:   58:    hints.ai_flags = AI_PASSIVE;
+        -:   59:    //std::to_string(port).c_str()
+        -:   60:
+        1:   61:    string port_str = to_string(nport);
+        1:   62:    if ((rv = getaddrinfo(NULL, port_str.c_str(), &hints, &ai)) != 0) {
+    #####:   63:        cerr << "selectserver: " << gai_strerror(rv) << endl;
+    #####:   64:        exit(1);
+        -:   65:    }
+        -:   66:    
+       1*:   67:    for(p = ai; p != NULL; p = p->ai_next) {
+        1:   68:        fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+       1*:   69:        if (fd < 0) { 
+    #####:   70:            continue;
+        -:   71:        }
+        -:   72:        
+        -:   73:        // Lose the pesky "address already in use" error message
+        1:   74:        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+        -:   75:
+       1*:   76:        if (bind(fd, p->ai_addr, p->ai_addrlen) < 0) {
+    #####:   77:            close(fd);
+    #####:   78:            continue;
+        -:   79:        }
+        -:   80:
+        1:   81:        break;
+        -:   82:    }
+        -:   83:
+        1:   84:    freeaddrinfo(ai); // All done with this
+        -:   85:
+       1*:   86:    if (p == NULL) return -1;
+        -:   87:
+        -:   88:    // Listen
+        1:   89:    listen(fd, 10);
+        1:   90:    return fd;
+        1:   91:}
+        -:   92:
+        4:   93:void calc(int id){
+        4:   94:    if (id == 0) ss << "total weight: " << mst.calc_weight() << endl;
+        3:   95:    else if (id == 1) ss << "avg Dis: " << mst.avgDistance() << endl;
+        2:   96:    else if (id == 2) ss << "max Dis: " << mst.maxDistance() << endl;
+        1:   97:    else if (id == 3) ss << "min Dis: " << mst.minDistance() << endl;
+        4:   98:}
+        -:   99:
+        -:  100:
+        9:  101:void proccessCommand(string line, int fd) {
+        9:  102:    cout << "ProccessCommand: " << line << endl;
+        9:  103:    ss.str("");
+        9:  104:    if(line[0] == 'g'){
+        1:  105:        int m = stoi(line.substr(line.find(" ") + 1, line.find(",")));
+        1:  106:        int n = stoi(line.substr(line.find(",") + 1, line.length()));
+        2:  107:        vector<vector<int>> newGraph(n, vector<int>(n, 0));
+        -:  108:
+        1:  109:        graph = Graph(m, n);
+        -:  110:
+        -:  111:        char buf[256];
+        -:  112:        int nbytes;
+        1:  113:        cout << "format: 'a' 'b' 'w'" << endl;
+        3:  114:        for(int i = 0; i < m; i++){
+        2:  115:            nbytes = recv(fd, buf, sizeof(buf), 0);
+        -:  116:            
+        2:  117:            string s1 = buf;
+        2:  118:            int f1 = s1.find(" ");
+        2:  119:            int f2 = s1.find(" ", s1.find(" ") + 1);
+        2:  120:            int a = stoi(s1.substr(0, f1));
+        2:  121:            int b = stoi(s1.substr(f1 + 1, f2));
+        2:  122:            int w = stoi(s1.substr(f2 + 1, s1.length()));
+        -:  123:            
+        -:  124:
+        2:  125:            if(a != b){
+        2:  126:                cout << "a: " << a << endl;
+        2:  127:                cout << "b: " << b << endl;
+        2:  128:                cout << "w: " << w << endl;
+        -:  129:                
+        2:  130:                graph.addEdge(a, b, w);
+        -:  131:            }
+        -:  132:            else{
+    #####:  133:                i--;
+        -:  134:            }
+        2:  135:        }
+        -:  136:    
+        1:  137:        ss << "new graph: " << endl;
+        4:  138:        for (int i = 0; i < n; i++) {
+       12:  139:            for (int j = 0; j < n; j++) {
+        -:  140:                
+        9:  141:                ss << graph.getWeight(i, j) << " ";
+        -:  142:            }
+        3:  143:            ss << endl;
+        -:  144:        }
+        1:  145:        is_graph = true;
+        -:  146:
+        1:  147:    }
+        8:  148:    else if (line[0] == 'p'){
+        2:  149:        ss.str("");
+        2:  150:        ss.clear();
+        2:  151:        if (is_graph) {
+        2:  152:            mst = prim(graph);
+        2:  153:            is_kruskal = false;
+        2:  154:            mst.floydWarshall();
+        2:  155:            ss << "MST: "<< endl;
+        8:  156:            for (int i = 0; i < mst.getV(); i++) {
+       24:  157:                for (int j = 0; j < mst.getV(); j++) {
+       18:  158:                    ss << std::to_string(mst.getWeight(i, j)) << " ";
+        -:  159:                }
+        6:  160:                ss << endl;
+        -:  161:            }
+        2:  162:            cout << ss.str() << endl;
+        2:  163:            is_mst = true;
+        -:  164:        }
+        -:  165:        
+        -:  166:    }
+        -:  167:
+        6:  168:    else if (line[0] == 'k'){
+        2:  169:        if (is_graph) {
+        2:  170:            mst = kruskal(graph);
+        2:  171:            is_kruskal = true;
+        2:  172:            mst.floydWarshall();
+        2:  173:            ss << "MST: " << endl;
+        8:  174:            for (int i = 0; i < mst.getV(); i++) {
+       24:  175:                for (int j = 0; j < mst.getV(); j++) {
+        -:  176:                    
+       18:  177:                    ss << std::to_string(mst.getWeight(i, j)) << " ";
+        -:  178:                }
+        6:  179:                ss << endl;
+        -:  180:            }
+        2:  181:            is_mst = true;
+        -:  182:        }
+        -:  183:    }
+        -:  184:
+        4:  185:    else if(line[0] == 'n'){
+        1:  186:        int f1 = line.find(" ");
+        1:  187:        int f2 = line.find(" ", f1 + 1);
+        1:  188:        int f3 = line.find(" ", f2 + 1);
+        1:  189:        int a = stoi(line.substr(f1 + 1, f2));
+        1:  190:        int b = stoi(line.substr(f2 + 1, f3));
+        1:  191:        int w = stoi(line.substr(f3 + 1, line.length()));
+        1:  192:        if (is_graph) {
+        1:  193:            graph.addEdge(a, b, w);
+        1:  194:            ss << "new edge: " << a << " " << b << " " << w << endl;
+        -:  195:        }
+        1:  196:        if(is_mst){
+        1:  197:            if(is_kruskal){
+        1:  198:                mst = kruskal(graph);
+        1:  199:                mst.floydWarshall();
+        -:  200:            }
+        -:  201:            else{
+    #####:  202:                mst = prim(graph);
+    #####:  203:                mst.floydWarshall();
+        -:  204:            }
+        -:  205:        }
+        -:  206:    }
+        -:  207:
+        3:  208:    else if(line[0] == 'r'){
+        1:  209:        int f1 = line.find(" ");
+        1:  210:        int f2 = line.find(" ", f1 + 1);
+        1:  211:        int a = stoi(line.substr(f1 + 1, f2));
+        1:  212:        int b = stoi(line.substr(f2 + 1, line.length()));
+        1:  213:        if (is_graph) {
+        1:  214:            graph.removeEdge(a, b);
+        1:  215:            ss << "remove edge: " << a << " " << b << endl;
+        -:  216:        }
+        1:  217:        if(is_mst){
+        1:  218:            if(is_kruskal){
+        1:  219:                mst = kruskal(graph);
+        1:  220:                mst.floydWarshall();
+        -:  221:            }
+        -:  222:            else{
+    #####:  223:                mst = prim(graph);
+    #####:  224:                mst.floydWarshall();
+        -:  225:            }
+        -:  226:        }
+        -:  227:    }
+        -:  228:
+        2:  229:    else if (line[0] == 'c') {
+        1:  230:        if (is_mst) {
+        1:  231:            if (!is_pipeline){
+    #####:  232:                LF lf(4);
+    #####:  233:                lf.addTask(calc);
+    #####:  234:                lf.addTask(calc);
+    #####:  235:                lf.addTask(calc);
+    #####:  236:                lf.addTask(calc);
+    #####:  237:                this_thread::sleep_for(chrono::seconds(1));
+    #####:  238:                lf.add_followers();
+    #####:  239:            } else {
+        -:  240:                // ActiveObject t1(0), t2(1), t3(2), t4(3);
+        -:  241:                // t1.request(calc);
+        -:  242:                // t2.request(calc);
+        -:  243:                // t3.request(calc);
+        -:  244:                // t4.request(calc);
+        -:  245:
+        -:  246:                // t1.start();
+        -:  247:                // t2.start();
+        -:  248:                // t3.start();
+        -:  249:                // t4.start();
+        -:  250:
+        -:  251:                // t1.join();
+        -:  252:                // t2.join();
+        -:  253:                // t3.join();
+        -:  254:                // t4.join();
+        1:  255:                PipeLine p(4);
+        1:  256:                p.start(calc);
+        1:  257:                p.join();
+        1:  258:            }
+        -:  259:        }
+        -:  260:    }
+        -:  261:
+        1:  262:    else if(line[0] == 'q'){
+        1:  263:        close(fd);
+        1:  264:        reactor->removeFdFromReactor(fd);
+        1:  265:        exit(0);
+        -:  266:    }
+        -:  267:
+        -:  268:    else{
+    #####:  269:        ss << "Invalid command" << endl;
+        -:  270:    }
+        -:  271:
+        8:  272:}
+        -:  273:
+        -:  274:
+        9:  275:void reactor_function(int fd) {
+        -:  276:    char buf[256];
+        9:  277:    memset(buf, 0, sizeof(buf));  // Clear buffer before use
+        9:  278:    int nbytes = recv(fd, buf, sizeof(buf), 0);
+        -:  279:
+        9:  280:    if (nbytes <= 0) {
+        -:  281:        // Got error or connection closed by client
+    #####:  282:        if (nbytes == 0) {
+    #####:  283:            cout << "pollserver: socket " << fd << " hung up" << endl;
+        -:  284:        } else {
+    #####:  285:            cerr << "recv error" << endl;
+        -:  286:        }
+    #####:  287:        close(fd);
+    #####:  288:        reactor->removeFdFromReactor(fd);
+        -:  289:    } else {
+        9:  290:        cout << "Received command: " << buf << endl;
+        -:  291:        // Process command and update stringstream
+        9:  292:        proccessCommand(buf, fd);
+        -:  293:        // Send response back to client
+        8:  294:        string response = ss.str();
+        8:  295:        if (send(fd, response.c_str(), response.length(), 0) == -1) {
+    #####:  296:            cerr << "send error" << endl;
+        -:  297:        }
+        -:  298:
+        -:  299:        // Clear the stringstream for next use
+        8:  300:        ss.str("");
+        8:  301:        ss.clear();
+        -:  302:
+        8:  303:    }
+        8:  304:}
+        -:  305:
+        -:  306:
+        1:  307:void reactor_accept(int fd){
+        -:  308:    struct sockaddr_storage remoteaddr; // Client address
+        -:  309:    socklen_t addrlen;
+        1:  310:    addrlen = sizeof(remoteaddr);
+        1:  311:    int newfd = accept(fd, (struct sockaddr *)&remoteaddr, &addrlen);
+        1:  312:    if (newfd == -1) {
+    #####:  313:        cerr << "accept";
+    #####:  314:        return;
+        -:  315:    }
+        -:  316:    
+        1:  317:    reactor->addFdToReactor(newfd, reactor_function);
+        -:  318:}
+        -:  319:
+        -:  320:
+        -:  321:
+        -:  322:
+        -:  323:    
+        -:  324:
+        -:  325:
+        1:  326:int main(int argc, char* argv[]) {
+        -:  327:
+        1:  328:    int nport = 9035;
+        -:  329:    int opt;
+        2:  330:    while ((opt = getopt(argc, argv, "l:p:")) != -1) {
+        1:  331:        switch (opt) {
+        1:  332:            case 'p'://pipeline
+        1:  333:                nport = stoi(optarg);
+        1:  334:                is_pipeline = true;
+        1:  335:                break;
+    #####:  336:            case 'l'://leader follower
+    #####:  337:                nport = stoi(optarg);
+    #####:  338:                is_pipeline = false;
+    #####:  339:                break;
+    #####:  340:            default:
+    #####:  341:                cerr << "Usage: " << argv[0] << " [-p pipeline] [-l leader-follower]" << endl;
+    #####:  342:                exit(1);
+        -:  343:        }
+        -:  344:    }
+        -:  345:
+        1:  346:    int listener = Listener(nport);
+        -:  347:
+        1:  348:    if (listener == -1) {
+    #####:  349:        cerr << "error getting listening socket" << endl;
+    #####:  350:        exit(1);
+        -:  351:    }
+        -:  352:
+        1:  353:    cout <<"Functions: " << endl;
+        1:  354:    cout << "g m n: create a new graph with m edges and n vertices" << endl;
+        1:  355:    cout << "p: calculate the minimum spanning tree using Prim's algorithm" << endl;
+        1:  356:    cout << "k: calculate the minimum spanning tree using Kruskal's algorithm" << endl;
+        1:  357:    cout << "n a b w: add a new edge between vertices a and b with weight w" << endl;
+        1:  358:    cout << "r a b: remove the edge between vertices a and b" << endl;
+        1:  359:    cout << "c: calculate the total weight, average distance, maximum distance, and minimum distance of the MST" << endl;
+        1:  360:    cout << "those statistics are calculated using design patterns chosen when starting the server" << endl;
+        1:  361:    cout << "q: quit and close the server	(︶︹︶) " << endl;
+        -:  362:
+        -:  363:   // reactor = new Reactor(listener, reactor_accept);
+        1:  364:    reactor = std::make_unique<Reactor>(listener, reactor_accept);
+        1:  365:    reactor->run();
+        -:  366:
+    #####:  367:    return 0;
+        -:  368:
+        -:  369:}

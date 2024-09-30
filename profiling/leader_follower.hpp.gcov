@@ -1,0 +1,100 @@
+        -:    0:Source:leader_follower.hpp
+        -:    0:Graph:main.gcno
+        -:    0:Data:main.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <iostream>
+        -:    4:#include <string>
+        -:    5:#include <cstring>
+        -:    6:#include <cstdlib>
+        -:    7:#include <vector>
+        -:    8:#include <thread>
+        -:    9:#include <queue>
+        -:   10:#include <mutex>
+        -:   11:
+        -:   12:using namespace std;
+        -:   13:
+        -:   14:
+        -:   15:typedef void (*taskFunc)(int id);
+        -:   16:
+        -:   17:class LF;
+        -:   18:void run(LF* lf, int id);
+        -:   19:int num = 0;
+        -:   20:class LF{
+        -:   21:	private:
+        -:   22:	    int numThreads;
+        -:   23:		int leader;
+        -:   24:	    mutex mtx;
+        -:   25:		vector<thread> followers;
+        -:   26:		queue<taskFunc> tasks;
+        -:   27:	public:
+    #####:   28:	    LF(int numThreads){
+    #####:   29:			this->numThreads = numThreads;
+    #####:   30:			this->leader = numThreads;
+        -:   31:			
+    #####:   32:		}
+        -:   33:
+    #####:   34:		void add_followers(){
+    #####:   35:			for (int i = 0; i < this->numThreads; ++i) {
+    #####:   36:				followers.push_back(thread([this, i] {this->run(i);}));
+        -:   37:			}
+    #####:   38:			for (auto& t : this->followers) {
+    #####:   39:                t.join();
+        -:   40:            }
+    #####:   41:			cout << this->numThreads << endl;
+    #####:   42:		}
+        -:   43:
+    #####:   44:		void addTask(taskFunc task){
+    #####:   45:            this->tasks.push(task);
+    #####:   46:        }
+        -:   47:
+    #####:   48:		void proccessTask(taskFunc task, int id){
+    #####:   49:			this->mtx.lock();
+    #####:   50:            task(id);
+    #####:   51:            this->mtx.unlock();
+    #####:   52:		}
+        -:   53:
+    #####:   54:		void promoteLeader(int id){
+    #####:   55:			this->mtx.lock();
+    #####:   56:			this->leader = id;
+    #####:   57:			this->mtx.unlock();
+    #####:   58:		}
+    #####:   59:		bool isLeader(int id) {return this->leader == id;}
+    #####:   60:		bool hasLeader() {return this->leader == this->followers.size();}
+    #####:   61:		void removeLeader(){
+    #####:   62:			this->mtx.lock();
+    #####:   63:			this->leader = this->followers.size();
+    #####:   64:			this->mtx.unlock();
+    #####:   65:		}
+    #####:   66:		taskFunc getTask(){
+    #####:   67:			if (this->tasks.size() == 0) return nullptr;
+    #####:   68:			taskFunc task = this->tasks.front();
+    #####:   69:			this->tasks.pop();
+    #####:   70:			return task;
+        -:   71:		}
+    #####:   72:		void run(int id){
+        -:   73:			while (true) {
+    #####:   74:			if (!this->hasLeader()) this->promoteLeader(id);
+    #####:   75:			if (this->isLeader(id)){
+    #####:   76:				taskFunc task = this->getTask();
+    #####:   77:				if (task != NULL) this->proccessTask(task, num++);
+    #####:   78:				else return;
+    #####:   79:				this->removeLeader();
+        -:   80:			}
+    #####:   81:		}
+        -:   82:}
+        -:   83:
+        -:   84:};
+        -:   85:
+        -:   86:// void run(LF* lf, int id){
+        -:   87:// 	while (true) {
+        -:   88://         if (!lf->hasLeader()) lf->promoteLeader(id);
+        -:   89:// 		if (lf->isLeader(id)){
+        -:   90:// 			taskFunc task = lf->getTask();
+        -:   91:// 			if (task != NULL) lf->proccessTask(task, num++);
+        -:   92:// 			else return;
+        -:   93:// 			lf->removeLeader();
+        -:   94:// 		}
+        -:   95://     }
+        -:   96:// }

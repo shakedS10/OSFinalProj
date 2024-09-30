@@ -1,0 +1,62 @@
+        -:    0:Source:active_object.hpp
+        -:    0:Graph:main.gcno
+        -:    0:Data:main.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <iostream>
+        -:    4:#include <string>
+        -:    5:#include <cstring>
+        -:    6:#include <cstdlib>
+        -:    7:#include <vector>
+        -:    8:#include <thread>
+        -:    9:#include <queue>
+        -:   10:
+        -:   11:
+        -:   12:using namespace std;
+        -:   13:
+        -:   14:class ActiveObject;
+        -:   15:typedef void (*taskFunc)(int id);
+        -:   16:
+        -:   17:void run(ActiveObject* obj, int id);
+        -:   18:
+        -:   19:class ActiveObject{
+        -:   20:	private:
+        -:   21:	    int id;
+        -:   22:		thread task;
+        -:   23:		queue<taskFunc> tasks;
+        8:   24:		void run(int id){
+        -:   25:			while (1){
+        8:   26:				taskFunc func = this->getTask();
+        8:   27:				if (func == nullptr) break;
+        4:   28:				func(id);
+        -:   29:
+        4:   30:			}
+        4:   31:		}
+        -:   32:	public:
+        4:   33:	    ActiveObject(int id){
+        4:   34:			this->id = id;
+        -:   35:			
+        4:   36:		}
+        4:   37:		void join(){
+        4:   38:			this->task.join();
+        4:   39:		}
+        4:   40:		void start(){
+        4:   41:			int x = this->id;
+        8:   42:			this->task = thread([this, x] {this->run(x);});
+        4:   43:		}
+        4:   44:		void request(taskFunc task){
+        4:   45:			this->tasks.push(task);
+        4:   46:		}
+        -:   47:
+        8:   48:		taskFunc getTask(){
+        8:   49:			if (this->tasks.size() == 0) return nullptr;
+        4:   50:			taskFunc func = this->tasks.front();
+        4:   51:			this->tasks.pop();
+        4:   52:			return func;
+        -:   53:		}
+        -:   54:
+        -:   55:
+        -:   56:
+        -:   57:};
+        -:   58:
